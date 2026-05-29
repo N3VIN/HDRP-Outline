@@ -7,7 +7,6 @@ Shader "Hidden/Shader/OutlinePass"
 
     #include "Packages/com.unity.render-pipelines.high-definition/Runtime/ShaderLibrary/ShaderVariables.hlsl"
     #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/NormalBuffer.hlsl"
-    #pragma vertex Vert
 
     TEXTURE2D_X(OutlineBuffer);
     float4 OutlineColor;
@@ -21,6 +20,7 @@ Shader "Hidden/Shader/OutlinePass"
     #define c225 0.9238795
     #define s225 0.3826834
 
+    #define SEAM_EPSILON 1e-4
     #define MaxSamples 8
     // Neighbour pixel positions
     static float2 SamplePoints[MaxSamples] =
@@ -61,6 +61,8 @@ Shader "Hidden/Shader/OutlinePass"
 
         if (Luminance(Outline.rgb) < Threshold)
         {
+            float currentDepth = LoadCameraDepth((uint2)Input.positionCS.xy);
+
             for (int i = 0; i < MaxSamples; i++)
             {
                 for(int j = 1; j <= Thickness; j++)
@@ -69,12 +71,16 @@ Shader "Hidden/Shader/OutlinePass"
                     float2 UVN = UV + _ScreenSize.zw * _RTHandleScale.xy * SamplePoints[i] * j;
                     float4 Neighbour = SAMPLE_TEXTURE2D_X_LOD(OutlineBuffer, s_linear_clamp_sampler, UVN, 0);
 
-                    
+
                     if (Luminance(Neighbour) > Threshold)
                     {
-                        Outline.rgb = OutlineColor.rgb;
+                        uint2 neighbourPx = (uint2)(Input.positionCS.xy + SamplePoints[i] * j);
+                        float neighbourDepth = LoadCameraDepth(neighbourPx);
 
-                       
+                        if (currentDepth > neighbourDepth + SEAM_EPSILON)
+                            continue;
+
+                        Outline.rgb = OutlineColor.rgb;
                         Outline.a = 1;
                         break;
                     }
@@ -99,7 +105,56 @@ Shader "Hidden/Shader/OutlinePass"
             Cull Off
 
             HLSLPROGRAM
+                #pragma vertex Vert
                 #pragma fragment FullScreenPass
+            ENDHLSL
+        }
+
+        Pass
+        {
+            Name "Outline Mask"
+
+            ZWrite Off
+            ZTest Always
+            Blend Off
+            Cull Back
+
+            HLSLPROGRAM
+            #pragma vertex VertMask
+            #pragma fragment FragMask
+
+            #define DEPTH_EPSILON 1e-5
+
+            struct AttributesMask
+            {
+                float3 positionOS : POSITION;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+            };
+
+            struct VaryingsMask
+            {
+                float4 positionCS : SV_POSITION;
+                UNITY_VERTEX_OUTPUT_STEREO
+            };
+
+            VaryingsMask VertMask(AttributesMask input)
+            {
+                VaryingsMask output;
+                UNITY_SETUP_INSTANCE_ID(input);
+                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
+                output.positionCS = TransformObjectToHClip(input.positionOS);
+                return output;
+            }
+
+            float4 FragMask(VaryingsMask input) : SV_Target
+            {
+                UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
+                uint2 px = (uint2)input.positionCS.xy;
+                float sceneDepth = LoadCameraDepth(px);
+                float fragDepth = input.positionCS.z;
+                if (fragDepth < sceneDepth - DEPTH_EPSILON) discard;
+                return float4(1, 1, 1, 1);
+            }
             ENDHLSL
         }
     }

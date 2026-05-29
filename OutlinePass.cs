@@ -23,12 +23,14 @@ namespace Modules.Rendering.Outline
         [SerializeField, HideInInspector] private Shader OutlineShader;
 
         Material FullscreenOutline;
+        Material MaskMaterial;
         RTHandle OutlineBuffer;
 
         protected override void Setup(ScriptableRenderContext RenderContext, CommandBuffer CMD)
         {
             OutlineShader = Shader.Find("Hidden/Shader/OutlinePass");
             FullscreenOutline = CoreUtils.CreateEngineMaterial(OutlineShader);
+            MaskMaterial = CoreUtils.CreateEngineMaterial(OutlineShader);
 
             OutlineBuffer = RTHandles.Alloc
             (
@@ -46,11 +48,9 @@ namespace Modules.Rendering.Outline
             {
                 for (int i = 0; i < Renderer.sharedMaterials.Length; i++)
                 {
-                    CTX.cmd.DrawRenderer(Renderer, Renderer.sharedMaterials[i], i);
+                    CTX.cmd.DrawRenderer(Renderer, MaskMaterial, i, 1);
                 }
             }));
-            
-            CustomPassUtils.DrawRenderers(CTX, OutlineLayer);
 
 
             CTX.propertyBlock.SetColor("OutlineColor", OutlineColor);
@@ -68,6 +68,7 @@ namespace Modules.Rendering.Outline
         protected override void Cleanup()
         {
             CoreUtils.Destroy(FullscreenOutline);
+            CoreUtils.Destroy(MaskMaterial);
             OutlineBuffer.Release();
         }
         
